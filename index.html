@@ -7,32 +7,40 @@
     <title>Hemocytometer Assistant</title>
     <style>
       :root {
-        --primary: #2563eb;
-        --primary-hover: #1d4ed8;
-        --bg-gray: #f3f4f6;
+        --primary: #0f766e; /* Teal-700 - Scientific look */
+        --primary-hover: #0d9488;
+        --accent: #0ea5e9;
+        
+        --bg-main: #f8fafc;
         --bg-card: #ffffff;
-        --bg-metric: #f8fafc;
-        --input-bg: #ffffff;
-        --border: #e5e7eb;
-        --text-main: #1f2937;
-        --text-sub: #6b7280;
+        --bg-panel: #f1f5f9;
+        
+        --text-main: #0f172a;
+        --text-sub: #64748b;
+        --border: #e2e8f0;
+        
+        --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
       }
 
-      /* Dark Mode Overrides */
-      html.dark {
-        --bg-gray: #111827;
-        --bg-card: #1f2937;
-        --bg-metric: #374151;
-        --input-bg: #111827;
-        --border: #374151;
-        --text-main: #f3f4f6;
-        --text-sub: #9ca3af;
+      body.dark-mode {
+        --primary: #2dd4bf; /* Teal-400 */
+        --primary-hover: #5eead4;
+        --accent: #38bdf8;
+        
+        --bg-main: #0f172a;
+        --bg-card: #1e293b;
+        --bg-panel: #334155;
+        
+        --text-main: #f1f5f9;
+        --text-sub: #94a3b8;
+        --border: #334155;
       }
       
       body {
         margin: 0;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-        background-color: var(--bg-gray);
+        font-family: var(--font-sans);
+        background-color: var(--bg-main);
         color: var(--text-main);
         transition: background-color 0.3s, color 0.3s;
       }
@@ -42,140 +50,154 @@
       }
 
       /* Layout Utilities */
-      .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
-      .card { background: var(--bg-card); border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); padding: 20px; margin-bottom: 20px; }
+      .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+      .card { 
+        background: var(--bg-card); 
+        border: 1px solid var(--border); 
+        border-radius: 4px; 
+        padding: 24px; 
+        margin-bottom: 24px; 
+      }
       .grid { display: grid; gap: 20px; }
       .grid-2 { grid-template-columns: 1fr 1fr; }
       .grid-4 { grid-template-columns: repeat(4, 1fr); }
-      .flex { display: flex; gap: 10px; align-items: center; }
-      .flex-col { display: flex; flexDirection: column; gap: 10px; }
+      .flex { display: flex; gap: 12px; align-items: center; }
+      .flex-col { display: flex; flex-direction: column; gap: 12px; }
       .justify-between { justify-content: space-between; }
+      .items-start { align-items: flex-start; }
       .w-full { width: 100%; }
       .mt-4 { margin-top: 1rem; }
       .mb-4 { margin-bottom: 1rem; }
+      .mb-2 { margin-bottom: 0.5rem; }
+      
+      h1, h2, h3, h4 { margin-top: 0; }
+      h1 { letter-spacing: -0.5px; }
+
       .text-sm { font-size: 0.875rem; }
+      .text-xs { font-size: 0.75rem; }
       .text-gray { color: var(--text-sub); }
       .font-bold { font-weight: 600; }
+      .font-mono { font-family: var(--font-mono); }
       .text-center { text-align: center; }
+      .text-right { text-align: right; }
 
       /* Tabs */
-      .tabs { display: flex; border-bottom: 1px solid var(--border); margin-bottom: 20px; overflow-x: auto; }
+      .tabs { display: flex; border-bottom: 1px solid var(--border); margin-bottom: 24px; gap: 4px; overflow-x: auto;}
       .tab-btn {
-        padding: 10px 20px;
-        border: none;
+        padding: 12px 16px;
+        border: 1px solid transparent;
+        border-bottom: none;
         background: none;
         cursor: pointer;
-        font-weight: 500;
+        font-weight: 600;
         color: var(--text-sub);
-        border-bottom: 2px solid transparent;
-        white-space: nowrap;
+        border-radius: 4px 4px 0 0;
+        font-family: var(--font-sans);
+        font-size: 0.9rem;
       }
-      .tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
-      .tab-btn:hover { color: var(--text-main); }
+      .tab-btn.active { 
+        color: var(--primary); 
+        background: var(--bg-card);
+        border-color: var(--border);
+        border-bottom-color: var(--bg-card);
+        margin-bottom: -1px;
+      }
+      .tab-btn:hover:not(.active) { color: var(--text-main); background: var(--bg-panel); }
 
       /* Inputs & Buttons */
+      label { display: block; margin-bottom: 4px; font-weight: 500; font-size: 0.85rem; color: var(--text-sub); }
+      
       input[type="text"], input[type="number"], select {
         width: 100%;
         padding: 8px 12px;
         border: 1px solid var(--border);
-        border-radius: 6px;
-        margin-top: 4px;
-        background-color: var(--input-bg);
+        background: var(--bg-main);
         color: var(--text-main);
+        border-radius: 4px;
+        font-family: var(--font-mono);
       }
+      input:focus, select:focus { outline: 2px solid var(--primary); border-color: transparent; }
+
       button.primary {
         background-color: var(--primary);
-        color: white;
+        color: #fff;
         padding: 8px 16px;
         border: none;
-        border-radius: 6px;
+        border-radius: 4px;
         cursor: pointer;
-        font-weight: 500;
+        font-weight: 600;
+        font-size: 0.9rem;
       }
       button.primary:hover { background-color: var(--primary-hover); }
+      
       button.secondary {
-        background-color: var(--bg-card);
+        background-color: var(--bg-main);
         border: 1px solid var(--border);
         color: var(--text-main);
         padding: 8px 16px;
-        border-radius: 6px;
+        border-radius: 4px;
         cursor: pointer;
+        font-weight: 500;
       }
-      button.danger {
-        background-color: #ef4444;
-        color: white;
-        padding: 6px 12px;
+      button.secondary:hover { border-color: var(--text-sub); }
+      button.secondary.active { border-color: var(--primary); color: var(--primary); background: var(--bg-panel); }
+
+      button.icon-btn {
+        background: none;
         border: none;
-        border-radius: 6px;
         cursor: pointer;
-        font-size: 0.8rem;
+        font-size: 1.2rem;
+        padding: 4px;
+        color: var(--text-main);
       }
 
       /* Canvas / Image Area */
       .canvas-container {
         position: relative;
         background: #000;
-        border-radius: 8px;
+        border-radius: 4px;
         overflow: hidden;
         display: flex;
         justify-content: center;
         align-items: center;
-        min-height: 300px;
+        min-height: 400px;
+        border: 1px solid var(--border);
       }
-      canvas { max-width: 100%; height: auto; display: block; }
-      
-      /* ROI Overlay */
-      .roi-box {
-        position: absolute;
-        border: 2px solid #ef4444;
-        box-shadow: 0 0 0 1000px rgba(0,0,0,0.5);
-        cursor: move;
-      }
+      .canvas-container img { max-width: 100%; height: auto; display: block; }
+
+      /* ROI Handles */
       .resize-handle {
-        width: 10px; height: 10px;
-        background: #ef4444;
+        width: 12px; height: 12px;
+        background: var(--accent);
+        border: 2px solid #fff;
         position: absolute;
-        bottom: -5px; right: -5px;
-        cursor: nwse-resize;
+        border-radius: 50%;
+        transform: translate(-50%, -50%);
+        box-shadow: 0 2px 4px rgba(0,0,0,0.3);
       }
 
-      /* Metrics */
+      /* Metrics Panel */
       .metric {
-        background: var(--bg-metric);
-        padding: 15px;
-        border-radius: 8px;
+        background: var(--bg-panel);
+        padding: 16px;
+        border-radius: 4px;
         text-align: center;
         border: 1px solid var(--border);
       }
-      .metric-val { font-size: 1.5rem; font-weight: 700; color: var(--primary); }
-      .metric-label { font-size: 0.85rem; color: var(--text-sub); margin-top: 5px; }
+      .metric-val { font-size: 1.5rem; font-weight: 700; color: var(--primary); font-family: var(--font-mono); }
+      .metric-label { font-size: 0.8rem; color: var(--text-sub); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 8px; }
 
-      /* Missing Utility Classes */
-      .bg-white { background-color: var(--bg-metric); }
-      .border { border: 1px solid var(--border); }
-      .rounded { border-radius: 6px; }
-      .p-3 { padding: 12px; }
-      .text-primary { color: var(--primary); }
-      .text-red-500 { color: #ef4444; }
-      .text-green-600 { color: #16a34a; }
-      .text-xl { font-size: 1.25rem; }
-      .text-lg { font-size: 1.125rem; }
-      .text-xs { font-size: 0.75rem; }
-      .text-2xl { font-size: 1.5rem; }
-      .block { display: block; }
-      .hidden { display: none; }
-      .items-center { align-items: center; }
-      .mr-2 { margin-right: 0.5rem; }
-      .mt-2 { margin-top: 0.5rem; }
-      .mb-1 { margin-bottom: 0.25rem; }
-      .mb-2 { margin-bottom: 0.5rem; }
-      .mb-6 { margin-bottom: 1.5rem; }
-      .py-1 { padding-top: 0.25rem; padding-bottom: 0.25rem; }
-      .py-4 { padding-top: 1rem; padding-bottom: 1rem; }
-      .py-10 { padding-top: 2.5rem; padding-bottom: 2.5rem; }
-      .border-b { border-bottom: 1px solid var(--border); }
-      .border-dashed { border-style: dashed; }
-      .border-gray-300 { border-color: var(--border); }
+      /* Ranges */
+      input[type=range] {
+        width: 100%;
+        margin: 8px 0;
+        accent-color: var(--primary);
+      }
+      
+      .text-danger { color: #ef4444; }
+      .text-success { color: #10b981; }
+
+      hr { border: 0; border-top: 1px solid var(--border); margin: 16px 0; }
 
       @media (max-width: 768px) {
         .grid-2, .grid-4 { grid-template-columns: 1fr; }
