@@ -139,6 +139,83 @@ const warpPerspective = (
 const safeDiv = (n: number, d: number) => (d === 0 ? 0 : n / d);
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
+const autoDetectCorners = (img: HTMLImageElement): Point[] => {
+    const w = 512;
+    const h = 512;
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    
+    // Default fallback
+    const defaults = [
+        {x: 0.2, y: 0.2}, {x: 0.8, y: 0.2},
+        {x: 0.8, y: 0.8}, {x: 0.2, y: 0.8}
+    ];
+
+    if (!ctx) return defaults;
+    
+    try {
+        ctx.drawImage(img, 0, 0, w, h);
+        const imageData = ctx.getImageData(0, 0, w, h);
+        const data = imageData.data;
+        const gray = new Uint8Array(w * h);
+
+        // Convert to grayscale
+        for (let i = 0; i < w * h; i++) {
+            gray[i] = 0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2];
+        }
+
+        // Compute edge projections
+        const rowScores = new Float32Array(h);
+        const colScores = new Float32Array(w);
+
+        for (let y = 1; y < h - 1; y++) {
+            for (let x = 1; x < w - 1; x++) {
+                const idx = y * w + x;
+                const score = Math.abs(gray[idx - 1] - gray[idx + 1]) + Math.abs(gray[idx - w] - gray[idx + w]);
+                if (score > 30) {
+                    rowScores[y]++;
+                    colScores[x]++;
+                }
+            }
+        }
+
+        const findBounds = (scores: Float32Array, len: number) => {
+            let max = 0;
+            for (let i = 0; i < len; i++) if (scores[i] > max) max = scores[i];
+            
+            if (max < 10) return { start: 0.2, end: 0.8 }; // No strong edges
+
+            const thresh = max * 0.15;
+            let start = 0, end = len - 1;
+
+            // Find start
+            while (start < len && scores[start] < thresh) start++;
+            // Find end
+            while (end > 0 && scores[end] < thresh) end--;
+
+            if (end <= start + 20) return { start: 0.2, end: 0.8 }; // Too small
+
+            return { start: start / len, end: end / len };
+        };
+
+        const xB = findBounds(colScores, w);
+        const yB = findBounds(rowScores, h);
+
+        return [
+            { x: xB.start, y: yB.start },
+            { x: xB.end, y: yB.start },
+            { x: xB.end, y: yB.end },
+            { x: xB.start, y: yB.end }
+        ];
+
+    } catch (e) {
+        console.error("Auto detection failed", e);
+        return defaults;
+    }
+};
+
 // --- Computer Vision Logic ---
 const processImage = (
   imgElement: HTMLImageElement,
@@ -474,6 +551,12 @@ const ImageProcessor = ({ flask, onUpdateCount }: { flask: FlaskData, onUpdateCo
     ]);
   }, [selectedImgIndex]);
 
+  const handleImageLoad = () => {
+    if (imgRef.current) {
+        setCorners(autoDetectCorners(imgRef.current));
+    }
+  };
+
   const runProcessing = () => {
     if (imgRef.current && activeImg) {
       const result = processImage(imgRef.current, corners, threshold, invert, showMask, minCellSize, erosionSteps);
@@ -581,6 +664,7 @@ const ImageProcessor = ({ flask, onUpdateCount }: { flask: FlaskData, onUpdateCo
                         <>
                             <img 
                                 ref={imgRef}
+                                onLoad={handleImageLoad}
                                 src={activeImg.originalSrc} 
                                 style={{ 
                                     width: '100%', 
@@ -748,6 +832,24 @@ const App = () => {
   const [flasks, setFlasks] = useState<FlaskData[]>([]);
   const [activeFlaskId, setActiveFlaskId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState('counter');
+
+  const [darkMode, setDarkMode] = useState(() => {
+    if (typeof window !== 'undefined') {
+        return localStorage.getItem('theme') === 'dark' || 
+               (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    if (darkMode) {
+      document.documentElement.classList.add('dark');
+      localStorage.setItem('theme', 'dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+      localStorage.setItem('theme', 'light');
+    }
+  }, [darkMode]);
 
   const activeFlask = flasks.find(f => f.id === activeFlaskId);
   
@@ -947,9 +1049,14 @@ const App = () => {
 
   return (
     <div className="container">
-      <h1 className="text-2xl font-bold mb-6 text-center text-primary">🔬 Hemocytometer Assistant</h1>
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-2xl font-bold text-primary">🔬 Hemocytometer Assistant</h1>
+         <button onClick={() => setDarkMode(!darkMode)} className="secondary" style={{ padding: '4px 8px', fontSize: '1.2rem' }}>
+            {darkMode ? '☀️' : '🌙'}
+        </button>
+      </div>
       
-      <FlaskManager 
+      <FlaskManager  
         flasks={flasks} 
         activeFlaskId={activeFlaskId} 
         onAddFlask={addFlask}
