@@ -319,24 +319,69 @@ const processImage = (
   if (!showMask) {
     ctx.putImageData(imageData, 0, 0); // Original
   } else {
-    // Green mask
+    // B&W mask: black background, white binary, bright cyan for detected cell regions
     const maskImg = ctx.createImageData(size, size);
-    for(let i=0; i<size*size; i++) {
-       if (finalBinary[i]) {
-         maskImg.data[i*4] = 0;   // R
-         maskImg.data[i*4+1] = 255; // G
-         maskImg.data[i*4+2] = 0;   // B
-         maskImg.data[i*4+3] = 100; // A
-       } else {
-         maskImg.data[i*4+3] = 0;
-       }
+    // Build a set of pixels belonging to valid blobs (post-filter) for highlighting
+    const cellPixels = new Uint8Array(size * size);
+    // Re-label valid blobs via second flood-fill pass over finalBinary using visited2
+    const visited2 = new Uint8Array(size * size);
+    for (let i = 0; i < size * size; i++) {
+      if (finalBinary[i] && !visited2[i]) {
+        const stack2 = [i];
+        visited2[i] = 1;
+        const pixels: number[] = [];
+        let area2 = 0, perim2 = 0;
+        let bMinX = size, bMaxX = 0, bMinY = size, bMaxY = 0;
+        while (stack2.length > 0) {
+          const c = stack2.pop()!;
+          const px = c % size, py = Math.floor(c / size);
+          pixels.push(c);
+          area2++;
+          if (px < bMinX) bMinX = px;
+          if (px > bMaxX) bMaxX = px;
+          if (py < bMinY) bMinY = py;
+          if (py > bMaxY) bMaxY = py;
+          let nn = 0;
+          for (let k = 0; k < 4; k++) {
+            const nx2 = px + dx[k], ny2 = py + dy[k];
+            const ni = ny2 * size + nx2;
+            if (nx2 >= 0 && nx2 < size && ny2 >= 0 && ny2 < size && finalBinary[ni]) {
+              nn++;
+              if (!visited2[ni]) { visited2[ni] = 1; stack2.push(ni); }
+            }
+          }
+          if (nn < 4) perim2++;
+        }
+        if (area2 >= minCellSize) {
+          const circ2 = (4 * Math.PI * area2) / (perim2 * perim2);
+          const bw = bMaxX - bMinX + 1, bh = bMaxY - bMinY + 1;
+          const ar2 = Math.max(bw, bh) / Math.min(bw, bh);
+          if (circ2 >= circularityThresh * 0.5 && ar2 <= 4.0) {
+            for (const p of pixels) cellPixels[p] = 1;
+          }
+        }
+      }
     }
-    // Blend with original (grayscale version for contrast)
-    ctx.putImageData(imageData, 0, 0);
-    const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = size; tempCanvas.height = size;
-    tempCanvas.getContext('2d')?.putImageData(maskImg, 0, 0);
-    ctx.drawImage(tempCanvas, 0, 0);
+    for (let i = 0; i < size * size; i++) {
+      if (cellPixels[i]) {
+        // Detected cell: bright white
+        maskImg.data[i * 4] = 255;
+        maskImg.data[i * 4 + 1] = 255;
+        maskImg.data[i * 4 + 2] = 255;
+      } else if (finalBinary[i]) {
+        // Binary foreground but not a valid cell: dark gray
+        maskImg.data[i * 4] = 60;
+        maskImg.data[i * 4 + 1] = 60;
+        maskImg.data[i * 4 + 2] = 60;
+      } else {
+        // Background: black
+        maskImg.data[i * 4] = 0;
+        maskImg.data[i * 4 + 1] = 0;
+        maskImg.data[i * 4 + 2] = 0;
+      }
+      maskImg.data[i * 4 + 3] = 255;
+    }
+    ctx.putImageData(maskImg, 0, 0);
   }
 
   blobs.forEach(b => {
@@ -488,7 +533,7 @@ const ImageProcessor = ({ flask, onUpdateCount }: { flask: FlaskData, onUpdateCo
   const [clickStep, setClickStep] = useState(0);
 
   // CV Parameters
-  const [threshold, setThreshold] = useState(120); 
+  const [threshold, setThreshold] = useState(180); 
   const [invert, setInvert] = useState(false);
   const [showMask, setShowMask] = useState(false);
   const [minCellSize, setMinCellSize] = useState(20); 
@@ -610,7 +655,8 @@ const ImageProcessor = ({ flask, onUpdateCount }: { flask: FlaskData, onUpdateCo
                 <div className="grid grid-2 mt-4 gap-4">
                     <div>
                         <label>Threshold ({threshold})</label>
-                        <input type="range" min="0" max="255" value={threshold} onChange={(e) => setThreshold(parseInt(e.target.value))} />
+                        <input type="range" min="150" max="220" value={threshold} onChange={(e) => setThreshold(parseInt(e.target.value))} />
+                        <p className="text-xs text-gray" style={{marginTop: 2}}>↑ Higher = fewer detections (stricter). ↓ Lower = more detections (may include noise).</p>
                     </div>
                      <div>
                         <label>Circularity ({circularity.toFixed(2)})</label>
@@ -623,7 +669,7 @@ const ImageProcessor = ({ flask, onUpdateCount }: { flask: FlaskData, onUpdateCo
                     <div className="flex flex-col justify-end">
                         <label className="flex items-center text-sm cursor-pointer mb-2">
                             <input type="checkbox" checked={showMask} onChange={e => setShowMask(e.target.checked)} style={{marginRight: '8px'}}/>
-                            Show Mask
+                            Show Mask (B&W)
                         </label>
                         <label className="flex items-center text-sm cursor-pointer">
                             <input type="checkbox" checked={invert} onChange={e => setInvert(e.target.checked)} style={{marginRight: '8px'}}/>
@@ -704,7 +750,6 @@ const ImageProcessor = ({ flask, onUpdateCount }: { flask: FlaskData, onUpdateCo
 const App = () => {
   const [flasks, setFlasks] = useState<FlaskData[]>([]);
   const [activeFlaskId, setActiveFlaskId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState('counter');
   const [darkMode, setDarkMode] = useState(false);
 
   useEffect(() => {
@@ -771,150 +816,207 @@ const App = () => {
     updateFlask(activeFlaskId, { images: updatedImages });
   };
 
-  const PassagingTab = () => {
-    const [targetType, setTargetType] = useState('T75');
-    const [numFlasks, setNumFlasks] = useState(1);
+  // ── Inline Section Components (rendered inside unified analytics card) ──
 
-    if (!activeFlask || !metrics) return <p className="text-center p-4">Please select a flask.</p>;
-
-    const minReq = targetType === 'T25' ? CONSTANTS.T25_MIN_REQ : CONSTANTS.T75_MIN_REQ;
-    const mediaVol = targetType === 'T25' ? CONSTANTS.T25_MEDIA_VOL : CONSTANTS.T75_MEDIA_VOL;
-    
-    const cellsNeeded = minReq * numFlasks;
-    const volSuspNeeded = safeDiv(cellsNeeded, metrics.conc);
-    const volRemaining = activeFlask.currentVol - volSuspNeeded;
-    
-    const maxCap = targetType === 'T25' ? 3e6 : 9e6; // Approximate max for confluency calc
-    const confluency = (minReq / maxCap) * 100;
+  const PassagingSection = ({ flask, metrics: m }: { flask: FlaskData; metrics: { conc: number; total: number } }) => {
+    const [numFlasks, setNumFlasks] = useState(7);
+    const flaskTypes: { key: string; label: string; minReq: number; mediaVol: number; seedRange: string }[] = [
+      { key: 'T12.5', label: 'T12.5', minReq: 0.25e6, mediaVol: 2.0, seedRange: '2–3' },
+      { key: 'T25', label: 'T25', minReq: 0.7e6, mediaVol: 5.0, seedRange: '3–5' },
+      { key: 'T75', label: 'T75', minReq: 2.1e6, mediaVol: 12.0, seedRange: '8–12' },
+    ];
+    // Per-flask suspension volumes
+    const suspPerFlask = flaskTypes.map(ft => ({
+      ...ft,
+      suspUl: safeDiv(ft.minReq, m.conc) * 1e6, // µL
+      seedDensity: ft.minReq / 1e6,
+      confT25: (ft.minReq / 3e6 * 100),
+      confT75: (ft.minReq / 9e6 * 100),
+    }));
+    const totalSuspUsed = suspPerFlask.reduce((s, f) => s + f.suspUl * (numFlasks > 0 ? 1 : 0), 0) * numFlasks / flaskTypes.length;
+    const volLeft = flask.currentVol * 1000 - totalSuspUsed;
 
     return (
-      <div className="card">
-        <h3 className="font-bold mb-4 border-b pb-2">Passaging Calculator</h3>
-        <div className="grid grid-2">
-            <div>
-                <label>Target Flask Type</label>
-                <select value={targetType} onChange={e => setTargetType(e.target.value)}>
-                    <option value="T25">T25</option>
-                    <option value="T75">T75</option>
-                </select>
-                <label className="mt-4">Number of Flasks</label>
-                <input type="number" min="1" value={numFlasks} onChange={e => setNumFlasks(parseInt(e.target.value))} />
-            </div>
-            <div className="metric items-start" style={{ textAlign: 'left' }}>
-                <div className="flex justify-between w-full border-b pb-1 mb-2">
-                    <span className="text-gray text-sm">Suspension Needed</span>
-                    <span className="font-bold font-mono">{(volSuspNeeded * 1000).toFixed(1)} µL</span>
-                </div>
-                 <div className="flex justify-between w-full border-b pb-1 mb-2">
-                    <span className="text-gray text-sm">Media per Flask</span>
-                    <span className="font-bold font-mono">{mediaVol} mL</span>
-                </div>
-                 <div className="flex justify-between w-full border-b pb-1 mb-2">
-                    <span className="text-gray text-sm">Est. Seeding Confluency</span>
-                    <span className="font-bold font-mono">~{confluency.toFixed(1)}%</span>
-                </div>
-                <div className="mt-4 text-center w-full">
-                    <p className={`font-bold ${volRemaining < 0 ? "text-danger" : "text-success"}`}>
-                        {volRemaining < 0 ? `Short by ${Math.abs(volRemaining).toFixed(2)} mL` : `Remaining Vol: ${volRemaining.toFixed(2)} mL`}
-                    </p>
-                </div>
-            </div>
+      <div style={{padding: '20px 24px', borderBottom: '1px solid var(--border)'}}>
+        <h3 className="font-bold" style={{marginBottom: 8, fontSize: '0.95rem'}}>Passaging — Flasks</h3>
+        <div style={{display: 'flex', gap: 12, alignItems: 'center', marginBottom: 12}}>
+          <label style={{margin: 0, whiteSpace: 'nowrap'}}>Number of new flasks per type</label>
+          <input type="number" min={1} value={numFlasks} onChange={e => setNumFlasks(parseInt(e.target.value) || 1)} style={{width: 70}} />
+        </div>
+        <div style={{overflowX: 'auto'}}>
+          <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem'}}>
+            <thead>
+              <tr style={{borderBottom: '2px solid var(--border)'}}>
+                <th style={{textAlign: 'left', padding: '6px 8px', color: 'var(--text-sub)'}}>Flask Type</th>
+                {Array.from({length: numFlasks}, (_, i) => (
+                  <th key={i} style={{textAlign: 'right', padding: '6px 8px', color: 'var(--text-sub)'}}>Flask {i + 1}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {/* Rows for each flask type */}
+              {flaskTypes.map(ft => {
+                const suspUl = safeDiv(ft.minReq, m.conc) * 1e6;
+                return (
+                  <React.Fragment key={ft.key}>
+                    <tr style={{borderBottom: '1px solid var(--border)'}}>
+                      <td style={{padding: '4px 8px', fontWeight: 600}}>{ft.label}</td>
+                      {Array.from({length: numFlasks}, (_, i) => (
+                        <td key={i} className="font-mono text-right" style={{padding: '4px 8px'}}>{ft.label}</td>
+                      ))}
+                    </tr>
+                    <tr><td className="text-gray" style={{padding: '2px 8px', fontSize: '0.78rem'}}>Passage</td>
+                      {Array.from({length: numFlasks}, (_, i) => <td key={i} className="font-mono text-right" style={{padding: '2px 8px'}}>{flask.passage + 1}</td>)}</tr>
+                    <tr><td className="text-gray" style={{padding: '2px 8px', fontSize: '0.78rem'}}>Cell Suspension (µL)</td>
+                      {Array.from({length: numFlasks}, (_, i) => <td key={i} className="font-mono text-right" style={{padding: '2px 8px'}}>{suspUl.toFixed(1)}</td>)}</tr>
+                    <tr><td className="text-gray" style={{padding: '2px 8px', fontSize: '0.78rem'}}>Seeding Density (×10⁶)</td>
+                      {Array.from({length: numFlasks}, (_, i) => <td key={i} className="font-mono text-right" style={{padding: '2px 8px'}}>{(ft.minReq / 1e6).toFixed(2)}</td>)}</tr>
+                    <tr><td className="text-gray" style={{padding: '2px 8px', fontSize: '0.78rem'}}>Media (mL)</td>
+                      {Array.from({length: numFlasks}, (_, i) => <td key={i} className="font-mono text-right" style={{padding: '2px 8px'}}>{ft.mediaVol}</td>)}</tr>
+                    <tr style={{borderBottom: '1px solid var(--border)'}}><td className="text-gray" style={{padding: '2px 8px', fontSize: '0.78rem'}}>Seed Range (×10⁶)</td>
+                      {Array.from({length: numFlasks}, (_, i) => <td key={i} className="font-mono text-right" style={{padding: '2px 8px'}}>{ft.seedRange}</td>)}</tr>
+                  </React.Fragment>
+                );
+              })}
+              <tr><td className="text-gray" style={{padding: '4px 8px'}}>% Confluency T25</td>
+                {Array.from({length: numFlasks}, (_, i) => <td key={i} className="font-mono text-right" style={{padding: '4px 8px'}}>{(m.total / numFlasks / 3e6 * 100).toFixed(1)}%</td>)}</tr>
+              <tr style={{borderBottom: '1px solid var(--border)'}}><td className="text-gray" style={{padding: '4px 8px'}}>% Confluency T75</td>
+                {Array.from({length: numFlasks}, (_, i) => <td key={i} className="font-mono text-right" style={{padding: '4px 8px'}}>{(m.total / numFlasks / 9e6 * 100).toFixed(1)}%</td>)}</tr>
+              <tr><td style={{padding: '4px 8px', fontWeight: 600}}>Vol Remaining (µL)</td>
+                <td className="font-mono text-right" colSpan={numFlasks} style={{padding: '4px 8px', color: volLeft < 0 ? '#ef4444' : '#10b981', fontWeight: 700}}>
+                  {volLeft.toFixed(1)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
     );
   };
 
-  const DilutionTab = ({ type }: { type: '96' | '24' }) => {
-    const [wantedConcM, setWantedConcM] = useState(type === '96' ? 0.1 : 0.5);
-    const [wells, setWells] = useState(type === '96' ? 96 : 24);
-    const [volPerWell, setVolPerWell] = useState(type === '96' ? 100 : 500);
+  const DilutionSection = ({ flask, metrics: m, type }: { flask: FlaskData; metrics: { conc: number }; type: '96' | '24' }) => {
+    const is96 = type === '96';
+    const title = is96 ? 'Dilutions for a 96-Well Plate' : 'Dilutions for a 24-Transwell Plate';
+    const unitLabel = is96 ? 'well' : 'transwell';
+    const [numCols, setNumCols] = useState(is96 ? 7 : 7);
+    const [minPerWell, setMinPerWell] = useState(is96 ? 0.01 : 0.1);
+    const [volPerWellUl, setVolPerWellUl] = useState(is96 ? 100 : 500);
+    const [numWells, setNumWells] = useState(is96 ? 96 : 24);
+    const [dilFactor, setDilFactor] = useState(1);
 
-    if (!metrics) return <p>Please select a flask.</p>;
-
-    const wantedConc = wantedConcM * 10 ** 6;
-    const deadVolBuffer = 1.05; // 5% overage
-    const totalVolUl = (wells * volPerWell) * deadVolBuffer;
-    
-    // C1V1 = C2V2 => V1 = (C2*V2)/C1
-    const suspUl = safeDiv(wantedConc * totalVolUl, metrics.conc);
-    const mediaUl = totalVolUl - suspUl;
+    const suspUlPerWell = safeDiv(minPerWell * 1e6, m.conc) * 1e6;
+    const mediaUlPerWell = volPerWellUl - suspUlPerWell;
+    const totalVolPerWell = volPerWellUl;
+    const concPerWell = safeDiv(minPerWell * 1e6, volPerWellUl) * 1e3; // 10^6 cells/mL
+    const totalSusp = suspUlPerWell * numWells;
+    const status = totalSusp > flask.currentVol * 1000 ? '⚠ INSUFFICIENT' : '✓ OK';
 
     return (
-      <div className="card">
-        <h3 className="font-bold mb-4 border-b pb-2">{type}-Well Plate Dilutions</h3>
-        <div className="grid grid-2">
-            <div>
-                <label>Wanted Conc. (M cells/mL)</label>
-                <input type="number" step="0.01" value={wantedConcM} onChange={e => setWantedConcM(parseFloat(e.target.value))} />
-                
-                <label className="mt-4">Number of Wells/Inserts</label>
-                <input type="number" value={wells} onChange={e => setWells(parseInt(e.target.value))} />
-
-                <label className="mt-4">Vol per Well (µL)</label>
-                <input type="number" value={volPerWell} onChange={e => setVolPerWell(parseInt(e.target.value))} />
-            </div>
-            <div className="metric" style={{ textAlign: 'left' }}>
-                <p className="font-bold mb-2 text-sm text-gray">RECIPE (Total + 5% Dead Vol)</p>
-                <div className="flex justify-between border-b py-2">
-                    <span>Cell Suspension</span>
-                    <span className="font-bold font-mono">{suspUl.toFixed(1)} µL</span>
-                </div>
-                <div className="flex justify-between border-b py-2">
-                    <span>Media</span>
-                    <span className="font-bold font-mono">{mediaUl.toFixed(1)} µL</span>
-                </div>
-                <div className="flex justify-between py-2 text-primary">
-                    <span>Total Volume</span>
-                    <span className="font-bold font-mono">{(totalVolUl/1000).toFixed(2)} mL</span>
-                </div>
-                {suspUl > (activeFlask?.currentVol || 0) * 1000 && (
-                    <p className="text-danger text-sm mt-4 font-bold text-center">⚠️ INSUFFICIENT SUSPENSION</p>
-                )}
-            </div>
+      <div style={{padding: '20px 24px', borderBottom: '1px solid var(--border)'}}>
+        <h3 className="font-bold" style={{marginBottom: 8, fontSize: '0.95rem'}}>{title}</h3>
+        <div style={{display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 12}}>
+          <div><label>Min per {unitLabel} (×10⁶)</label><input type="number" step="0.001" value={minPerWell} onChange={e => setMinPerWell(parseFloat(e.target.value) || 0)} style={{width: 100}} /></div>
+          <div><label>Vol per {unitLabel} (µL)</label><input type="number" value={volPerWellUl} onChange={e => setVolPerWellUl(parseInt(e.target.value) || 1)} style={{width: 90}} /></div>
+          <div><label>Number of {unitLabel}s</label><input type="number" value={numWells} onChange={e => setNumWells(parseInt(e.target.value) || 1)} style={{width: 80}} /></div>
+          <div><label>Dilution Factor</label><input type="number" step="0.1" value={dilFactor} onChange={e => setDilFactor(parseFloat(e.target.value) || 1)} style={{width: 70}} /></div>
+        </div>
+        <div style={{overflowX: 'auto'}}>
+          <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem'}}>
+            <thead>
+              <tr style={{borderBottom: '2px solid var(--border)'}}>
+                <th style={{textAlign: 'left', padding: '6px 8px', color: 'var(--text-sub)'}}>Parameter</th>
+                {Array.from({length: numCols}, (_, i) => (
+                  <th key={i} style={{textAlign: 'right', padding: '6px 8px', color: 'var(--text-sub)'}}>{is96 ? `Col ${i+1}` : `Well ${i+1}`}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td className="text-gray" style={{padding: '4px 8px'}}>Cell Suspension (µL)</td>
+                {Array.from({length: numCols}, (_, i) => <td key={i} className="font-mono text-right" style={{padding: '4px 8px'}}>{suspUlPerWell.toFixed(1)}</td>)}</tr>
+              <tr><td className="text-gray" style={{padding: '4px 8px'}}>Media (µL)</td>
+                {Array.from({length: numCols}, (_, i) => <td key={i} className="font-mono text-right" style={{padding: '4px 8px'}}>{mediaUlPerWell.toFixed(1)}</td>)}</tr>
+              <tr><td className="text-gray" style={{padding: '4px 8px'}}>Total Volume (µL)</td>
+                {Array.from({length: numCols}, (_, i) => <td key={i} className="font-mono text-right" style={{padding: '4px 8px'}}>{totalVolPerWell}</td>)}</tr>
+              <tr><td className="text-gray" style={{padding: '4px 8px'}}>Conc (×10⁶ cells/mL)</td>
+                {Array.from({length: numCols}, (_, i) => <td key={i} className="font-mono text-right" style={{padding: '4px 8px'}}>{(minPerWell).toFixed(4)}</td>)}</tr>
+              <tr style={{borderTop: '1px solid var(--border)'}}>
+                <td style={{padding: '4px 8px', fontWeight: 600}}>Status</td>
+                <td colSpan={numCols} className="text-right font-bold" style={{padding: '4px 8px', color: status.startsWith('⚠') ? '#ef4444' : '#10b981'}}>{status}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
     );
   };
 
-  const CryoTab = () => {
-    const [targetM, setTargetM] = useState(CONSTANTS.CRYO_SUGGESTED_PER_TUBE); 
-    const [tubes, setTubes] = useState(1);
+  const CryoSection = ({ flask, metrics: m }: { flask: FlaskData; metrics: { conc: number; total: number } }) => {
+    const [numTubes, setNumTubes] = useState(7);
+    const suggestedPerTube = 10; // ×10⁶ cells per spreadsheet
+    const maxVolTube = 1.3; // mL, not counting DMSO
 
-    if (!metrics) return <p>Please select a flask.</p>;
-
-    const targetPerTube = targetM * 10 ** 6;
-    const maxTubes = Math.floor(safeDiv(metrics.total, targetPerTube));
-    
-    const cellsReq = tubes * targetPerTube;
-    const volToSpin = safeDiv(cellsReq, metrics.conc);
-    
-    const finalVol = tubes * 1.0; 
-    const dmsoVol = finalVol * 0.1;
-    const resuspVol = finalVol * 0.9;
+    const suspUlPerTube = safeDiv(suggestedPerTube * 1e6, m.conc) * 1e6;
+    const maxSeedVol = safeDiv(maxVolTube * m.conc, suggestedPerTube * 1e6) * 1e6; // µL
+    const seedDensity = suggestedPerTube;
+    const dmsoPerTube = maxVolTube * 0.1 * 1000; // µL (10% of total)
+    const mediaPerTube = maxVolTube * 1000 - suspUlPerTube - dmsoPerTube;
+    const totalVolPerTube = suspUlPerTube + dmsoPerTube + Math.max(0, mediaPerTube);
+    const concPerTube = safeDiv(suggestedPerTube, totalVolPerTube / 1000);
+    const totalSusp = suspUlPerTube * numTubes;
+    const status = totalSusp > flask.currentVol * 1000 ? '⚠ INSUFFICIENT' : '✓ OK';
 
     return (
-      <div className="card">
-        <h3 className="font-bold mb-4 border-b pb-2">Cryopreservation</h3>
-        <div className="grid grid-2">
-            <div>
-                <label>Target Cells / Tube (Millions)</label>
-                <input type="number" step="0.1" value={targetM} onChange={e => setTargetM(parseFloat(e.target.value))} />
-                
-                <p className="text-xs text-gray mt-1">Max possible tubes: {maxTubes}</p>
-
-                <label className="mt-4">Tubes to Make</label>
-                <input type="number" max={maxTubes} value={tubes} onChange={e => setTubes(parseInt(e.target.value))} />
-            </div>
-            <div className="metric" style={{ textAlign: 'left' }}>
-                <p className="font-bold text-sm text-gray mb-2">PROTOCOL STEP-BY-STEP</p>
-                <ol className="text-sm pl-4" style={{ lineHeight: '1.8' }}>
-                    <li>Spin down <strong>{volToSpin.toFixed(2)} mL</strong> of suspension.</li>
-                    <li>Aspirate supernatant.</li>
-                    <li>Resuspend pellet in <strong>{resuspVol.toFixed(2)} mL</strong> Media/FBS.</li>
-                    <li>Add <strong>{dmsoVol.toFixed(2)} mL</strong> (10%) DMSO.</li>
-                    <li>Aliquot <strong>1 mL</strong> into {tubes} cryotubes.</li>
-                </ol>
-            </div>
+      <div style={{padding: '20px 24px', borderBottom: '1px solid var(--border)'}}>
+        <h3 className="font-bold" style={{marginBottom: 8, fontSize: '0.95rem'}}>Cryotubes</h3>
+        <div style={{display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 8}}>
+          <div className="metric" style={{padding: '8px 12px', flex: '0 0 auto'}}>
+            <div className="metric-label" style={{marginTop: 0, fontSize: '0.7rem'}}>Suggested/tube (×10⁶)</div>
+            <div className="metric-val" style={{fontSize: '1rem'}}>{suggestedPerTube}</div>
+          </div>
+          <div className="metric" style={{padding: '8px 12px', flex: '0 0 auto'}}>
+            <div className="metric-label" style={{marginTop: 0, fontSize: '0.7rem'}}>Max Vol/tube (mL)</div>
+            <div className="metric-val" style={{fontSize: '1rem'}}>{maxVolTube}</div>
+          </div>
+          <div className="metric" style={{padding: '8px 12px', flex: '0 0 auto'}}>
+            <div className="metric-label" style={{marginTop: 0, fontSize: '0.7rem'}}>Max Seed Vol (µL)</div>
+            <div className="metric-val" style={{fontSize: '1rem'}}>{maxSeedVol.toFixed(0)}</div>
+          </div>
+          <div style={{display: 'flex', alignItems: 'center', gap: 8}}>
+            <label style={{margin: 0, whiteSpace: 'nowrap'}}>Tubes</label>
+            <input type="number" min={1} value={numTubes} onChange={e => setNumTubes(parseInt(e.target.value) || 1)} style={{width: 70}} />
+          </div>
+        </div>
+        <div style={{overflowX: 'auto'}}>
+          <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem'}}>
+            <thead>
+              <tr style={{borderBottom: '2px solid var(--border)'}}>
+                <th style={{textAlign: 'left', padding: '6px 8px', color: 'var(--text-sub)'}}>Parameter</th>
+                {Array.from({length: numTubes}, (_, i) => (
+                  <th key={i} style={{textAlign: 'right', padding: '6px 8px', color: 'var(--text-sub)'}}>Tube {i + 1}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td className="text-gray" style={{padding: '4px 8px'}}>New Passage</td>
+                {Array.from({length: numTubes}, (_, i) => <td key={i} className="font-mono text-right" style={{padding: '4px 8px'}}>{flask.passage + 1}</td>)}</tr>
+              <tr><td className="text-gray" style={{padding: '4px 8px'}}>Cell Suspension (µL)</td>
+                {Array.from({length: numTubes}, (_, i) => <td key={i} className="font-mono text-right" style={{padding: '4px 8px'}}>{suspUlPerTube.toFixed(1)}</td>)}</tr>
+              <tr><td className="text-gray" style={{padding: '4px 8px'}}>Seeding Density (×10⁶)</td>
+                {Array.from({length: numTubes}, (_, i) => <td key={i} className="font-mono text-right" style={{padding: '4px 8px'}}>{seedDensity}</td>)}</tr>
+              <tr><td className="text-gray" style={{padding: '4px 8px'}}>DMSO (µL)</td>
+                {Array.from({length: numTubes}, (_, i) => <td key={i} className="font-mono text-right" style={{padding: '4px 8px'}}>{dmsoPerTube.toFixed(0)}</td>)}</tr>
+              <tr><td className="text-gray" style={{padding: '4px 8px'}}>Media (µL)</td>
+                {Array.from({length: numTubes}, (_, i) => <td key={i} className="font-mono text-right" style={{padding: '4px 8px'}}>{Math.max(0, mediaPerTube).toFixed(0)}</td>)}</tr>
+              <tr><td className="text-gray" style={{padding: '4px 8px'}}>Total Volume (µL)</td>
+                {Array.from({length: numTubes}, (_, i) => <td key={i} className="font-mono text-right" style={{padding: '4px 8px'}}>{totalVolPerTube.toFixed(0)}</td>)}</tr>
+              <tr><td className="text-gray" style={{padding: '4px 8px'}}>Conc (×10⁶/mL)</td>
+                {Array.from({length: numTubes}, (_, i) => <td key={i} className="font-mono text-right" style={{padding: '4px 8px'}}>{concPerTube.toFixed(2)}</td>)}</tr>
+              <tr style={{borderTop: '1px solid var(--border)'}}>
+                <td style={{padding: '4px 8px', fontWeight: 600}}>Status</td>
+                <td colSpan={numTubes} className="text-right font-bold" style={{padding: '4px 8px', color: status.startsWith('⚠') ? '#ef4444' : '#10b981'}}>{status}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
     );
@@ -929,7 +1031,7 @@ const App = () => {
             onClick={() => setDarkMode(!darkMode)}
             style={{ fontSize: '0.8rem', padding: '6px 12px' }}
         >
-            {darkMode ? "☀️ Light Mode" : "🌙 Dark Mode"}
+            {darkMode ? '☀️ Light' : '🌙 Dark'}
         </button>
       </div>
       
@@ -943,59 +1045,74 @@ const App = () => {
 
       {activeFlask && metrics && (
         <>
-            <div className="grid grid-4 mb-6">
-                <div className="metric">
-                    <div className="metric-val">{metrics.avg.toFixed(1)}</div>
-                    <div className="metric-label">Avg Count</div>
-                </div>
-                <div className="metric">
-                    <div className="metric-val">{(metrics.conc / 1e6).toFixed(2)} M</div>
-                    <div className="metric-label">Conc (cells/mL)</div>
-                </div>
-                <div className="metric">
-                    <div className="metric-val">{(metrics.total / 1e6).toFixed(2)} M</div>
-                    <div className="metric-label">Total Cells</div>
-                </div>
-                <div className="metric">
-                    <div className="metric-val text-gray">± {metrics.sem.toFixed(2)}</div>
-                    <div className="metric-label">SEM</div>
-                </div>
-            </div>
-
-            <div className="tabs">
-                {['counter', 'passaging', '96well', '24well', 'cryo'].map(t => (
-                    <button 
-                        key={t}
-                        className={`tab-btn ${activeTab === t ? 'active' : ''}`}
-                        onClick={() => setActiveTab(t)}
-                    >
-                        {t === 'counter' ? '📷 Counter' : 
-                         t === 'passaging' ? '🧪 Passaging' :
-                         t === '96well' ? '🧫 96-Well' :
-                         t === '24well' ? '⚪ 24-Well' : '❄️ Cryo'}
-                    </button>
-                ))}
-            </div>
-
-            {activeTab === 'counter' && (
-                <>
-                    <div className="flex justify-between items-center mb-4 card p-4 items-center">
-                        <div>
-                            <span className="font-bold text-sm">IMAGE SET FOR: {activeFlask.name}</span>
-                            <span className="block text-xs text-gray">{activeFlask.images.length} images loaded</span>
-                        </div>
-                        <label className="primary cursor-pointer" style={{ display: 'inline-block', padding: '8px 16px', borderRadius: '4px', color: 'white' }}>
-                            UPLOAD MICROSCOPE IMAGES
-                            <input type="file" multiple accept="image/*" onChange={handleImageUpload} className="hidden" />
-                        </label>
+            {/* ═══ ANALYTICS DASHBOARD — matches spreadsheet ═══ */}
+            <div className="card" style={{padding: 0, overflow: 'hidden'}}>
+              {/* ── Section 1: Cell Count Summary ── */}
+              <div style={{padding: '20px 24px', borderBottom: '1px solid var(--border)'}}>
+                <h3 className="font-bold" style={{marginBottom: 12, fontSize: '0.95rem'}}>Cell Count Summary</h3>
+                <div className="grid grid-4" style={{gap: 12}}>
+                  {activeFlask.images.slice(0, 4).map((img, i) => (
+                    <div key={img.id} className="metric" style={{padding: 10}}>
+                      <div className="metric-label" style={{marginTop: 0, marginBottom: 4}}>Q{i + 1}</div>
+                      <div className="metric-val" style={{fontSize: '1.2rem'}}>{img.count}</div>
                     </div>
-                    <ImageProcessor flask={activeFlask} onUpdateCount={updateImageCount} />
-                </>
-            )}
-            {activeTab === 'passaging' && <PassagingTab />}
-            {activeTab === '96well' && <DilutionTab type="96" />}
-            {activeTab === '24well' && <DilutionTab type="24" />}
-            {activeTab === 'cryo' && <CryoTab />}
+                  ))}
+                  {[...Array(Math.max(0, 4 - activeFlask.images.length))].map((_, i) => (
+                    <div key={`empty-${i}`} className="metric" style={{padding: 10, opacity: 0.4}}>
+                      <div className="metric-label" style={{marginTop: 0, marginBottom: 4}}>Q{activeFlask.images.length + i + 1}</div>
+                      <div className="metric-val" style={{fontSize: '1.2rem'}}>—</div>
+                    </div>
+                  ))}
+                </div>
+                <div className="grid" style={{gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', gap: 12, marginTop: 12}}>
+                  <div className="metric" style={{padding: 10}}>
+                    <div className="metric-label" style={{marginTop: 0, marginBottom: 4}}>Average</div>
+                    <div className="metric-val" style={{fontSize: '1.1rem'}}>{metrics.avg.toFixed(1)}</div>
+                  </div>
+                  <div className="metric" style={{padding: 10}}>
+                    <div className="metric-label" style={{marginTop: 0, marginBottom: 4}}>Conc (×10⁶/mL)</div>
+                    <div className="metric-val" style={{fontSize: '1.1rem'}}>{(metrics.conc / 1e6).toFixed(4)}</div>
+                  </div>
+                  <div className="metric" style={{padding: 10}}>
+                    <div className="metric-label" style={{marginTop: 0, marginBottom: 4}}>Vol Resuspension (µL)</div>
+                    <div className="metric-val" style={{fontSize: '1.1rem'}}>{(activeFlask.currentVol * 1000).toFixed(0)}</div>
+                  </div>
+                  <div className="metric" style={{padding: 10}}>
+                    <div className="metric-label" style={{marginTop: 0, marginBottom: 4}}>Density (×10⁶ cells)</div>
+                    <div className="metric-val" style={{fontSize: '1.1rem'}}>{(metrics.total / 1e6).toFixed(4)}</div>
+                  </div>
+                  <div className="metric" style={{padding: 10}}>
+                    <div className="metric-label" style={{marginTop: 0, marginBottom: 4}}>SEM</div>
+                    <div className="metric-val" style={{fontSize: '1.1rem'}}>± {metrics.sem.toFixed(2)}</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* ── Section 2: Passaging ── */}
+              <PassagingSection flask={activeFlask} metrics={metrics} />
+
+              {/* ── Section 3: 96-Well Plate ── */}
+              <DilutionSection flask={activeFlask} metrics={metrics} type="96" />
+
+              {/* ── Section 4: Cryotubes ── */}
+              <CryoSection flask={activeFlask} metrics={metrics} />
+
+              {/* ── Section 5: 24-Well Transwell ── */}
+              <DilutionSection flask={activeFlask} metrics={metrics} type="24" />
+            </div>
+
+            {/* ═══ CELL COUNTER (images) ═══ */}
+            <div className="flex justify-between items-center mb-4 card" style={{padding: '12px 24px'}}>
+                <div>
+                    <span className="font-bold text-sm">IMAGE SET: {activeFlask.name}</span>
+                    <span className="block text-xs text-gray">{activeFlask.images.length} images loaded</span>
+                </div>
+                <label className="primary cursor-pointer" style={{ display: 'inline-block', padding: '8px 16px', borderRadius: '4px', color: 'white' }}>
+                    UPLOAD IMAGES
+                    <input type="file" multiple accept="image/*" onChange={handleImageUpload} className="hidden" />
+                </label>
+            </div>
+            <ImageProcessor flask={activeFlask} onUpdateCount={updateImageCount} />
         </>
       )}
     </div>
