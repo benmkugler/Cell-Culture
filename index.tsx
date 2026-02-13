@@ -87,6 +87,13 @@ const warpPerspective = (ctx: CanvasRenderingContext2D, img: HTMLImageElement, c
 // --- Helpers ---
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
+const saveImage = (dataUrl: string, filename: string) => {
+  const a = document.createElement('a');
+  a.href = dataUrl;
+  a.download = filename;
+  a.click();
+};
+
 // --- CV Pipeline ---
 const processImage = (
   imgElement: HTMLImageElement, corners: Point[], threshold: number,
@@ -424,9 +431,18 @@ const ImageProcessor = ({ flask, onUpdateCount }: { flask: FlaskData; onUpdateCo
                 <label className="font-bold">DETECTED COUNT</label>
                 <span className="text-3xl font-bold font-mono text-primary">{activeImg.count}</span>
               </div>
-              <label>Manual Correction</label>
-              <input type="number" value={activeImg?.count || 0}
-                onChange={e => onUpdateCount(activeImg.id, parseInt(e.target.value) || 0, activeImg.processedSrc || activeImg.originalSrc)} />
+              <div className="flex" style={{ gap: '8px' }}>
+                <div style={{ flex: 1 }}>
+                  <label>Manual Correction</label>
+                  <input type="number" value={activeImg?.count || 0}
+                    onChange={e => onUpdateCount(activeImg.id, parseInt(e.target.value) || 0, activeImg.processedSrc || activeImg.originalSrc)} />
+                </div>
+                <button className="primary" disabled={!activeImg.processedSrc}
+                  style={{ alignSelf: 'flex-end', whiteSpace: 'nowrap' }}
+                  onClick={() => activeImg.processedSrc && saveImage(activeImg.processedSrc, `${flask.name}_image${selectedImgIndex + 1}.png`)}>
+                  💾 Save Image
+                </button>
+              </div>
             </div>
             <div>
               <h4 className="font-bold mb-2 text-xs text-gray">IMAGES IN FLASK</h4>
