@@ -87,11 +87,36 @@ const warpPerspective = (ctx: CanvasRenderingContext2D, img: HTMLImageElement, c
 // --- Helpers ---
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
-const saveImage = (dataUrl: string, filename: string) => {
-  const a = document.createElement('a');
-  a.href = dataUrl;
-  a.download = filename;
-  a.click();
+const saveImage = (dataUrl: string, filename: string, count?: number) => {
+  if (count == null) {
+    const a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = filename;
+    a.click();
+    return;
+  }
+  const img = new Image();
+  img.onload = () => {
+    const barHeight = 40;
+    const canvas = document.createElement('canvas');
+    canvas.width = img.width;
+    canvas.height = img.height + barHeight;
+    const ctx = canvas.getContext('2d')!;
+    ctx.drawImage(img, 0, 0);
+    // Draw label bar below the image
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(0, img.height, canvas.width, barHeight);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 20px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`Total Cells: ${count}`, canvas.width / 2, img.height + barHeight / 2);
+    const a = document.createElement('a');
+    a.href = canvas.toDataURL('image/png');
+    a.download = filename;
+    a.click();
+  };
+  img.src = dataUrl;
 };
 
 // --- CV Pipeline ---
@@ -439,7 +464,7 @@ const ImageProcessor = ({ flask, onUpdateCount }: { flask: FlaskData; onUpdateCo
                 </div>
                 <button className="primary" disabled={!activeImg.processedSrc}
                   style={{ alignSelf: 'flex-end', whiteSpace: 'nowrap' }}
-                  onClick={() => activeImg.processedSrc && saveImage(activeImg.processedSrc, `${flask.name}_image${selectedImgIndex + 1}.png`)}>
+                  onClick={() => activeImg.processedSrc && saveImage(activeImg.processedSrc, `${flask.name}_image${selectedImgIndex + 1}.png`, activeImg.count)}>
                   💾 Save Image
                 </button>
               </div>
